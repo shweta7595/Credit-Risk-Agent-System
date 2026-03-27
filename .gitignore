@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.env
+*.pkl
+*.joblib
+data/credit_risk_dataset.csv
+data/raw/
+.ipynb_checkpoints/
+*.log
+.DS_Store
+venv/
+.venv/
