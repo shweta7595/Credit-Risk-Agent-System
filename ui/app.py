@@ -6,6 +6,7 @@ Run from repository root:
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -20,7 +21,40 @@ if str(ROOT) not in sys.path:
 
 load_dotenv(ROOT / ".env")
 
+
+def _apply_streamlit_secrets_to_environ() -> None:
+    """Copy Streamlit (Cloud) secrets into os.environ — agents use os.getenv only.
+
+    Supports flat TOML keys and nested tables like `[mysection]` where inner
+    keys become env names (e.g. GROQ_API_KEY under a section).
+    """
+    try:
+        root = dict(st.secrets)
+    except Exception:
+        return
+
+    def walk(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        for key, val in node.items():
+            sk = str(key)
+            if sk.startswith("_"):
+                continue
+            if isinstance(val, str) and val.strip():
+                os.environ[sk] = val.strip()
+            elif isinstance(val, dict):
+                if sk == "APP_RBAC_USERS":
+                    os.environ["APP_RBAC_USERS"] = json.dumps(val)
+                else:
+                    walk(val)
+
+    walk(root)
+
+
+_apply_streamlit_secrets_to_environ()
+
 from src.agents.graph import run_pipeline
+from src.agents.llm_provider import llm_credentials_ok, resolve_llm_provider
 from src.security import (
     Role,
     authenticate,
@@ -175,6 +209,15 @@ def main() -> None:
 
     with st.sidebar:
         st.caption(f"Signed in as **{st.session_state.auth_user}** ({role.value})")
+        _prov = resolve_llm_provider()
+        if llm_credentials_ok():
+            st.caption(f"LLM: `{_prov}` — key loaded")
+        else:
+            st.warning(
+                f"LLM not configured for `{_prov}`. On **Streamlit Cloud**, add Secrets "
+                f"(e.g. `GROQ_API_KEY` and `LLM_PROVIDER = 'groq'`), then reboot. "
+                f"Nested TOML sections are supported."
+            )
         if st.button("Sign out"):
             st.session_state.auth_role = None
             st.session_state.auth_user = None
