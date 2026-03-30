@@ -6,6 +6,7 @@ build/
 .env
 *.pkl
 *.joblib
+!models/*.joblib
 data/credit_risk_dataset.csv
 data/raw/
 .ipynb_checkpoints/
