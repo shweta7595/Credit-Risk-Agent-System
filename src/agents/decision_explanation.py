@@ -4,9 +4,9 @@ import logging
 from typing import Dict, Any
 from datetime import datetime, timezone
 
-from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 
+from src.agents.llm_provider import llm_credentials_ok, make_chat_llm
 from src.security.llm_guardrails import combine_system_message
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,26 @@ def run(state: Dict[str, Any]) -> Dict[str, Any]:
     applicant = state["applicant"]
     raw = state["raw_data"]
 
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2, max_tokens=1500)
+    if not llm_credentials_ok():
+        trace_entry["status"] = "skipped"
+        trace_entry["reason"] = "no LLM API key for configured provider"
+        return {
+            "explanation_report": (
+                "Explanation skipped: set OPENAI_API_KEY (openai), GOOGLE_API_KEY (gemini), "
+                "GROQ_API_KEY (groq or llama3), or LLM_PROVIDER=ollama with Ollama running."
+            ),
+            "agent_trace": state.get("agent_trace", []) + [trace_entry],
+        }
+
+    try:
+        llm = make_chat_llm(temperature=0.2, max_tokens=1500)
+    except RuntimeError as e:
+        trace_entry["status"] = "skipped"
+        trace_entry["reason"] = str(e)
+        return {
+            "explanation_report": f"Explanation skipped: {e}",
+            "agent_trace": state.get("agent_trace", []) + [trace_entry],
+        }
 
     shap_text = _format_shap_factors(state.get("shap_explanation", {}))
 
@@ -93,26 +112,35 @@ def run(state: Dict[str, Any]) -> Dict[str, Any]:
 
     chain = EXPLANATION_PROMPT | llm
 
-    response = chain.invoke({
-        "person_age": applicant["person_age"],
-        "person_income": applicant["person_income"],
-        "person_home_ownership": applicant["person_home_ownership"],
-        "person_emp_length": applicant["person_emp_length"],
-        "loan_intent": applicant["loan_intent"],
-        "loan_grade": applicant["loan_grade"],
-        "loan_amnt": applicant["loan_amnt"],
-        "loan_int_rate": applicant["loan_int_rate"],
-        "loan_percent_income": applicant["loan_percent_income"],
-        "cb_person_default_on_file": cb_default_display,
-        "cb_person_cred_hist_length": applicant["cb_person_cred_hist_length"],
-        "risk_score": state.get("risk_score", "N/A"),
-        "risk_tier": state.get("risk_tier", "N/A"),
-        "confidence": state.get("confidence", "N/A"),
-        "shap_factors": shap_text,
-        "policy_passed": state.get("policy_passed", "N/A"),
-        "policy_violations": "\n".join(state.get("policy_violations", [])) or "None",
-        "decision": state.get("decision", "N/A"),
-    })
+    try:
+        response = chain.invoke({
+            "person_age": applicant["person_age"],
+            "person_income": applicant["person_income"],
+            "person_home_ownership": applicant["person_home_ownership"],
+            "person_emp_length": applicant["person_emp_length"],
+            "loan_intent": applicant["loan_intent"],
+            "loan_grade": applicant["loan_grade"],
+            "loan_amnt": applicant["loan_amnt"],
+            "loan_int_rate": applicant["loan_int_rate"],
+            "loan_percent_income": applicant["loan_percent_income"],
+            "cb_person_default_on_file": cb_default_display,
+            "cb_person_cred_hist_length": applicant["cb_person_cred_hist_length"],
+            "risk_score": state.get("risk_score", "N/A"),
+            "risk_tier": state.get("risk_tier", "N/A"),
+            "confidence": state.get("confidence", "N/A"),
+            "shap_factors": shap_text,
+            "policy_passed": state.get("policy_passed", "N/A"),
+            "policy_violations": "\n".join(state.get("policy_violations", [])) or "None",
+            "decision": state.get("decision", "N/A"),
+        })
+    except Exception as e:
+        logger.exception("DecisionExplanationAgent failed: %s", e)
+        trace_entry["status"] = "error"
+        trace_entry["error"] = str(e)
+        return {
+            "explanation_report": f"Explanation generation failed: {e}",
+            "agent_trace": state.get("agent_trace", []) + [trace_entry],
+        }
 
     report = response.content
 

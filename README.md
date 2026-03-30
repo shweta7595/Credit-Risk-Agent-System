@@ -79,7 +79,10 @@ pip install -r requirements.txt
 ```bash
 cp .env.example .env
 # Edit .env with your API keys:
-#   OPENAI_API_KEY=your-key
+#   OPENAI_API_KEY=your-key   (LLM_PROVIDER=openai, default)
+#   or GOOGLE_API_KEY + LLM_PROVIDER=gemini
+#   or GROQ_API_KEY + LLM_PROVIDER=groq or llama3 (Llama 3 on Groq)
+#   or LLM_PROVIDER=ollama with local Ollama (e.g. ollama pull llama3)
 #   LANGCHAIN_API_KEY=your-langsmith-key (optional, for monitoring)
 ```
 

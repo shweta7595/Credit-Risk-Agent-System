@@ -1,7 +1,8 @@
 """Main entry point for the Credit Risk Underwriting Agent System.
 
 Run: python main.py
-Requires: trained model (run `python -m src.train` first) and OPENAI_API_KEY in .env
+Requires: trained model (run `python -m src.train` first) and LLM config in .env
+  (OPENAI / GOOGLE / GROQ keys by LLM_PROVIDER, or ollama for local Llama)
 """
 
 import json
@@ -24,6 +25,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 from src.agents.graph import run_pipeline
+from src.agents.llm_provider import llm_credentials_ok, resolve_llm_provider
 
 
 SAMPLE_APPLICANTS = [
@@ -126,9 +128,12 @@ def main():
         print("  python -m src.train")
         return
 
-    if not os.getenv("OPENAI_API_KEY"):
-        print("WARNING: OPENAI_API_KEY not set. Decision Explanation and LLM Judge")
-        print("agents will fail or skip. Set it in .env or export it.")
+    if not llm_credentials_ok():
+        print("WARNING: No LLM API key for the configured provider.")
+        print(
+            f"  LLM_PROVIDER={resolve_llm_provider()} — set the matching key in .env "
+            "(OPENAI / GOOGLE / GROQ) or use ollama with the server running."
+        )
 
     langsmith_key = os.getenv("LANGCHAIN_API_KEY")
     if langsmith_key:

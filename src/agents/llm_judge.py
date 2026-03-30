@@ -11,9 +11,9 @@ from typing import Any, Dict, List
 from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
+from src.agents.llm_provider import llm_credentials_ok, make_chat_llm
 from src.security.llm_guardrails import combine_system_message
 
 logger = logging.getLogger(__name__)
@@ -113,13 +113,16 @@ def run(state: Dict[str, Any]) -> Dict[str, Any]:
         "status": "running",
     }
 
-    if not os.getenv("OPENAI_API_KEY"):
+    if not llm_credentials_ok():
         trace_entry["status"] = "skipped"
-        trace_entry["reason"] = "OPENAI_API_KEY not set"
+        trace_entry["reason"] = "no LLM API key for configured provider"
         logger.warning("LLMJudgeAgent: skipped — no API key")
         return {
             "llm_judge_verdict": "SKIPPED",
-            "llm_judge_rationale": "Judge requires OPENAI_API_KEY.",
+            "llm_judge_rationale": (
+                "Judge requires OPENAI_API_KEY, GOOGLE_API_KEY (gemini), GROQ_API_KEY (groq/llama3), "
+                "or LLM_PROVIDER=ollama with Ollama running."
+            ),
             "llm_judge_concerns": [],
             "llm_judge_compliance_notes": "",
             "agent_trace": state.get("agent_trace", []) + [trace_entry],
@@ -130,7 +133,19 @@ def run(state: Dict[str, Any]) -> Dict[str, Any]:
     if len(report) > 6000:
         excerpt += "\n\n[... truncated for judge context ...]"
 
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1, max_tokens=1200)
+    try:
+        llm = make_chat_llm(temperature=0.1, max_tokens=1200)
+    except RuntimeError as e:
+        trace_entry["status"] = "skipped"
+        trace_entry["reason"] = str(e)
+        return {
+            "llm_judge_verdict": "SKIPPED",
+            "llm_judge_rationale": str(e),
+            "llm_judge_concerns": [],
+            "llm_judge_compliance_notes": "",
+            "agent_trace": state.get("agent_trace", []) + [trace_entry],
+        }
+
     structured = llm.with_structured_output(JudgeVerdict)
 
     chain = JUDGE_PROMPT | structured
