@@ -15,7 +15,9 @@ import shap
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+from sklearn.model_selection import train_test_split
 from sklearn.utils.class_weight import compute_sample_weight
 from sklearn.metrics import (
     accuracy_score,
@@ -45,8 +47,13 @@ def train_model(
     y_train: pd.Series,
     X_test: pd.DataFrame,
     y_test: pd.Series,
-) -> Tuple[GradientBoostingClassifier, Dict[str, Any]]:
-    """Train production Gradient Boosting with balanced sample weights."""
+) -> Tuple[GradientBoostingClassifier, "CalibratedClassifierCV", Dict[str, Any]]:
+    """Train production Gradient Boosting with balanced sample weights.
+
+    Returns both the raw model (for SHAP TreeExplainer) and a calibrated
+    wrapper (for probability outputs). Isotonic calibration corrects the
+    score inflation caused by compute_sample_weight('balanced').
+    """
     sample_weights = compute_sample_weight("balanced", y_train)
 
     model = GradientBoostingClassifier(
@@ -60,9 +67,19 @@ def train_model(
     )
     model.fit(X_train, y_train, sample_weight=sample_weights)
 
-    metrics = evaluate_model(model, X_test, y_test)
-    logger.info("GradientBoosting (production) – AUC: %.4f, F1: %.4f", metrics["auc"], metrics["f1"])
-    return model, metrics
+    # Split X_test into calibration set (50%) and evaluation set (50%).
+    # Calibration corrects score inflation from balanced sample weights.
+    X_cal, X_eval, y_cal, y_eval = train_test_split(
+        X_test, y_test, test_size=0.5, random_state=42, stratify=y_test
+    )
+    calibrated = CalibratedClassifierCV(model, cv="prefit", method="isotonic")
+    calibrated.fit(X_cal, y_cal)
+
+    metrics = evaluate_model(calibrated, X_eval, y_eval)
+    logger.info(
+        "GradientBoosting (calibrated) – AUC: %.4f, F1: %.4f", metrics["auc"], metrics["f1"]
+    )
+    return model, calibrated, metrics
 
 
 def train_benchmark_random_forest(
@@ -283,32 +300,59 @@ def save_model(
     feature_names: List[str],
     scaled_columns: List[str],
     threshold: float = DEFAULT_THRESHOLD,
+    calibrated_model: "CalibratedClassifierCV | None" = None,
+    metrics: "Dict[str, Any] | None" = None,
 ) -> Dict[str, str]:
-    """Persist production model artifacts (Gradient Boosting only)."""
+    """Persist production model artifacts.
+
+    Saves calibrated model for scoring (risk_model.joblib) and raw model
+    for SHAP TreeExplainer (risk_model_raw.joblib).
+    Optionally saves evaluation metrics (model_metrics.joblib) for the monitoring UI.
+    """
     paths = {
-        "model": MODEL_DIR / "risk_model.joblib",
-        "scaler": MODEL_DIR / "scaler.joblib",
-        "features": MODEL_DIR / "feature_names.joblib",
+        "model":       MODEL_DIR / "risk_model.joblib",
+        "model_raw":   MODEL_DIR / "risk_model_raw.joblib",
+        "scaler":      MODEL_DIR / "scaler.joblib",
+        "features":    MODEL_DIR / "feature_names.joblib",
         "scaled_cols": MODEL_DIR / "scaled_columns.joblib",
-        "threshold": MODEL_DIR / "threshold.joblib",
+        "threshold":   MODEL_DIR / "threshold.joblib",
     }
-    joblib.dump(model, paths["model"])
+    joblib.dump(calibrated_model if calibrated_model is not None else model, paths["model"])
+    joblib.dump(model, paths["model_raw"])
     joblib.dump(scaler, paths["scaler"])
     joblib.dump(feature_names, paths["features"])
     joblib.dump(scaled_columns, paths["scaled_cols"])
     joblib.dump(threshold, paths["threshold"])
 
-    logger.info("Model artifacts saved to %s (threshold=%.4f)", MODEL_DIR, threshold)
+    if metrics is not None:
+        metrics_path = MODEL_DIR / "model_metrics.joblib"
+        joblib.dump(metrics, metrics_path)
+        paths["metrics"] = metrics_path
+
+    logger.info("Model artifacts saved to %s (threshold=%.4f, calibrated=%s)",
+                MODEL_DIR, threshold, calibrated_model is not None)
     return {k: str(v) for k, v in paths.items()}
 
 
-def load_model() -> Tuple[GradientBoostingClassifier, Any, List[str], List[str]]:
-    """Load persisted production model artifacts."""
+def load_model_metrics() -> "Dict[str, Any] | None":
+    """Load persisted evaluation metrics saved at training time."""
+    path = MODEL_DIR / "model_metrics.joblib"
+    return joblib.load(path) if path.exists() else None
+
+
+def load_model() -> Tuple[Any, Any, List[str], List[str], GradientBoostingClassifier]:
+    """Load persisted production model artifacts.
+
+    Returns (scoring_model, scaler, feature_names, scaled_columns, shap_model)
+    where scoring_model is calibrated (if available) and shap_model is raw GB.
+    """
     model = joblib.load(MODEL_DIR / "risk_model.joblib")
+    raw_path = MODEL_DIR / "risk_model_raw.joblib"
+    shap_model = joblib.load(raw_path) if raw_path.exists() else model
     scaler = joblib.load(MODEL_DIR / "scaler.joblib")
     feature_names = joblib.load(MODEL_DIR / "feature_names.joblib")
     scaled_columns = joblib.load(MODEL_DIR / "scaled_columns.joblib")
-    return model, scaler, feature_names, scaled_columns
+    return model, scaler, feature_names, scaled_columns, shap_model
 
 
 def load_threshold() -> float:

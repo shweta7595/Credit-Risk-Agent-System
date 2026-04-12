@@ -1,6 +1,8 @@
-# Credit Risk Underwriting Agent System
+# CreditGenie — AI-Powered Credit Risk Underwriting
 
-An AI-powered multi-agent system for automated credit risk underwriting, built with **LangGraph** for agent orchestration, **scikit-learn Gradient Boosting** (production) with **Random Forest** as a training-time benchmark, **SHAP** on the production model, and **LangSmith** for monitoring.
+CreditGenie is a production-grade multi-agent system for automated credit risk underwriting. It combines a **scikit-learn Gradient Boosting** model (calibrated, PR-threshold tuned) with a **LangGraph** agent pipeline, **SHAP** explainability, a **Groq/Llama 3** LLM judge for independent audit, and a role-gated **Streamlit** UI with a built-in admin monitoring dashboard.
+
+---
 
 ## Architecture
 
@@ -12,197 +14,281 @@ An AI-powered multi-agent system for automated credit risk underwriting, built w
                                                             │
                        ┌──────────────────────┐    ┌────────▼────────┐
                        │ Decision Explanation  │◄───│ Policy Validation│
-                       │       Agent (LLM)     │    │      Agent       │
+                       │     Agent  (LLM)      │    │      Agent       │
                        └──────────┬───────────┘    └─────────────────┘
                                   │
                        ┌──────────▼───────────┐
                        │    LLM Judge Agent   │
-                       │ (audit / 2nd line)   │
+                       │  (2nd-line audit)    │
                        └──────────────────────┘
 ```
 
 ### Agents
 
 | Agent | Responsibility |
-|-------|---------------|
-| **Data Aggregation** | Validates and normalizes raw applicant data, flags anomalies |
+|---|---|
+| **Data Aggregation** | Validates and normalises raw applicant data, flags anomalies |
 | **Feature Engineering** | WOE/IV analysis, income ratios, risk buckets, employment quantiles, one-hot encoding |
-| **Risk Modeling** | Runs production **Gradient Boosting**; PR-tuned threshold; **SHAP** (TreeExplainer on GB) |
-| **Policy Validation** | Checks against credit policy, risk thresholds, and regulatory constraints |
-| **Decision Explanation** | Generates human-readable, compliant underwriting reports via LLM |
-| **LLM Judge** | Independent review: consistency of decision vs score/policy, fairness red flags, **CONCUR** / **FLAG_FOR_REVIEW** / **CHALLENGE** (does not auto-override the system decision) |
+| **Risk Modeling** | Calibrated Gradient Boosting; PR-tuned threshold; SHAP TreeExplainer |
+| **Policy Validation** | Checks eligibility criteria, risk thresholds, and regulatory constraints |
+| **Decision Explanation** | Internal analyst memo via LLM (Groq/Llama 3) — risk summary, factor analysis, recommendation |
+| **LLM Judge** | Independent second-line auditor: **CONCUR / FLAG_FOR_REVIEW / CHALLENGE** (does not auto-override) |
 
-## Dataset
+---
 
-Uses the [Credit Risk Dataset](https://www.kaggle.com/datasets/laotse/credit-risk-dataset) from Kaggle:
-- **32,581** loan applications
-- **12 raw features** → **41 model features** after engineering
-- **Target**: `loan_status` (0 = no default, 1 = default)
-
-## Feature Engineering
-
-| Category | Features | Description |
-|----------|----------|-------------|
-| **Income Ratios** | DTI, PTI, monthly_payment_est, loan_to_income | Debt-to-income, payment-to-income, credit utilisation |
-| **Risk Buckets** | loan_grade_bucket, age_bucket, cred_hist_bucket | Prime/subprime, age groups, credit history bins |
-| **Employment** | emp_length_quantile, emp_length_missing | Quantile-based bucketing with missingness flag |
-| **WOE/IV Analysis** | Computed for all categoricals | loan_grade IV=0.88, home_ownership IV=0.38 |
-| **One-Hot Encoding** | 29 dummy variables | All categoricals encoded with drop_first=True |
-
-## Model Performance
-
-**Production:** Gradient Boosting (300 estimators, `max_depth=5`, balanced `sample_weight`). **Threshold** is chosen from the **precision–recall curve** on the test set (default strategy: max precision subject to recall ≥ 0.85) and saved to `models/threshold.joblib`.
-
-**Benchmark:** Random Forest (500 trees, `max_depth=16`, `class_weight=balanced_subsample`) is trained on the same split and printed at `t=0.50` only — **not** deployed or saved for inference.
-
-Run `python -m src.train` for current numbers. Typical production GB on this dataset is around **AUC ≈ 0.95** at `t=0.50` (RF benchmark is usually lower).
-
-### Information Values (IV)
-
-| Feature | IV | Predictive Power |
-|---------|---:|-----------------|
-| loan_grade | 0.8817 | Very Strong |
-| person_home_ownership | 0.3770 | Strong |
-| cb_person_default_on_file | 0.1640 | Medium |
-| loan_intent | 0.0958 | Weak |
-
-## Setup
-
-### 1. Install Dependencies
+## Quick Start
 
 ```bash
+git clone <repo-url>
+cd Credit-Risk-Agent-System
+./setup.sh
+```
+
+`setup.sh` will:
+- Check Python ≥ 3.10
+- Create and activate a virtual environment (`.venv/`)
+- Install all dependencies from `requirements.txt`
+- Copy `.env.example` → `.env` if no `.env` exists
+- Optionally download the dataset and train the model
+
+---
+
+## Manual Setup
+
+### 1. Virtual environment
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Configure Environment
+### 2. Configure environment
 
 ```bash
 cp .env.example .env
-# Edit .env with your API keys:
-#   OPENAI_API_KEY=your-key   (LLM_PROVIDER=openai, default)
-#   or GOOGLE_API_KEY + LLM_PROVIDER=gemini
-#   or GROQ_API_KEY + LLM_PROVIDER=groq or llama3 (Llama 3 on Groq)
-#   or LLM_PROVIDER=ollama with local Ollama (e.g. ollama pull llama3)
-#   LANGCHAIN_API_KEY=your-langsmith-key (optional, for monitoring)
 ```
 
-### 3. Download Dataset & Train Model
+Open `.env` and fill in your keys:
+
+| Variable | Required | Description |
+|---|---|---|
+| `GROQ_API_KEY` | **Yes** | Free key at [console.groq.com](https://console.groq.com) |
+| `LANGCHAIN_API_KEY` | Optional | LangSmith tracing — [smith.langchain.com](https://smith.langchain.com) |
+| `APP_RBAC_USERS` | Optional | JSON user directory for login (see `.env.example`) |
+
+### 3. Train the model
 
 ```bash
 python -m src.train
 ```
 
-This will:
-- Download the dataset from Kaggle (via kagglehub)
-- Clean data (outlier capping, missing value imputation with missingness flags)
-- Engineer 41 features (income ratios, risk buckets, WOE/IV, one-hot encoding)
-- Train **Gradient Boosting** (production) and **Random Forest** (benchmark metrics only)
-- Tune and save the production **threshold** from the GB precision–recall curve
-- Save model artifacts to `models/`
+Downloads the Kaggle credit risk dataset, engineers 41 features, trains a calibrated Gradient Boosting model, tunes the decision threshold on the PR curve, and saves all artifacts to `models/`.
 
-### 4. Run the Agent System
-
-```bash
-python main.py
-```
-
-Processes 3 sample applicants (low/medium/high risk) through the full 6-agent LangGraph pipeline (including LLM judge) and outputs decisions with explainability and audit verdicts.
-
-### 5. Underwriting chat UI (Streamlit)
-
-After training, run the browser UI from the repository root:
+### 4. Start CreditGenie
 
 ```bash
 streamlit run ui/app.py
 ```
 
-Sign in with users defined in **`APP_RBAC_USERS`** (see `.env.example`), or leave it unset to use **demo mode** (choose a role without a password). Enter applicant fields in the sidebar and click **Run underwriting**; results appear as chat messages, **filtered by role** (see below). Free-text notes in the chat are passed through **regex PII redaction** before being stored in the session (SSN-like, card-like, email, US phone).
+---
 
-### Security: LLM guardrails, PII, and RBAC
+## CreditGenie UI
 
-- **Bias and PII system prompts**: The Decision Explanation and LLM Judge agents prepend a shared system block (`src/security/llm_guardrails.py`) that instructs fair-lending–aware, neutral language and forbids inferring protected attributes, inventing identifiers, or echoing sensitive data.
-- **PII redaction**: `src/security/redact.py` provides `redact_pii()` for free-text channels (used in the UI).
-- **RBAC**: `src/security/rbac.py` maps users from **`APP_RBAC_USERS`** JSON to roles **`viewer`**, **`underwriter`**, **`auditor`**, **`admin`**. The UI calls `filter_pipeline_result_for_role()` so viewers see coarse outcomes only (no full explanation, SHAP, judge, or trace); underwriters see operational detail but truncated judge rationale and no judge compliance notes; auditors and admins see the full pipeline output including trace and judge.
+The Streamlit app runs on **http://localhost:8501** and has two pages.
 
-For production, replace plaintext passwords in `APP_RBAC_USERS` with an identity provider or hashed secrets.
+### Underwriting Workspace
 
-## Output
+Sign in using the role selector (dev mode, no password required) or with credentials from `APP_RBAC_USERS`. Enter applicant details in the sidebar and click **Run underwriting** — results appear as chat messages filtered by role.
 
-For each applicant, the system produces:
+- **Admin users** see a highlighted **"📊 Risk Model Monitoring"** button in the top-right corner of the workspace, which navigates to the monitoring page.
+- **Auditor / Admin** results include a collapsed **"View agent trace"** expander beneath each decision.
+- Free-text notes in the chat input are PII-redacted before display.
 
-- **Decision**: `APPROVE`, `DECLINE`, or `MANUAL_REVIEW`
-- **Risk Score**: Default probability (0.0 – 1.0)
-- **Risk Tier**: `LOW`, `MEDIUM`, or `HIGH`
-- **Confidence Score**: Model confidence in the prediction
-- **Explainability Report**: Human-readable report with top risk factors (SHAP-based)
-- **Policy Violations**: List of any credit policy or regulatory violations
-- **LLM Judge**: Verdict (`CONCUR`, `FLAG_FOR_REVIEW`, `CHALLENGE`, or `SKIPPED`), rationale, concerns list, compliance notes
-- **Agent Trace**: Timestamped execution log of all 6 agents
+### Admin Monitoring Page (admin only)
 
-## LangSmith Monitoring
+Accessible via the **📊 Risk Model Monitoring** button. Contains two tabs:
 
-When `LANGCHAIN_API_KEY` is set in `.env`, all agent executions are automatically traced to [LangSmith](https://smith.langchain.com):
+**📈 Model Performance**
+- Key metrics row: AUC-ROC, Average Precision, Accuracy, Decision Threshold, Default Recall
+- Per-class precision / recall / F1 / support table (No Default vs Default)
+- Confusion matrix
+- PR curve + ROC curve (generated at training time)
 
-- View the full agent graph execution
-- Monitor LLM calls (Decision Explanation + LLM Judge agents)
-- Track latency, token usage, and costs
-- Debug individual agent steps
+**📋 Session Log**
+- Persistent log of every underwriting run across all sessions and all users
+- Filter by: user · decision · risk tier · date
+- Download as CSV
 
-Project name: `credit-risk-agent-system`
+---
+
+## Role-Based Access Control (RBAC)
+
+| Role | Decision | Risk Score | SHAP | Explanation | Policy Violations | LLM Judge | Agent Trace |
+|---|---|---|---|---|---|---|---|
+| **viewer** | ✓ | ✓ | — | Withheld | Count only | — | — |
+| **underwriter** | ✓ | ✓ | ✓ | ✓ | ✓ | Partial | — |
+| **auditor** | ✓ | ✓ | ✓ | ✓ | ✓ | Full | Expander |
+| **admin** | ✓ | ✓ | ✓ | ✓ | ✓ | Full | Expander |
+
+Demo mode (no `APP_RBAC_USERS` set): select any role at login, no password required.
+
+---
+
+## Dataset
+
+[Credit Risk Dataset](https://www.kaggle.com/datasets/laotse/credit-risk-dataset) — downloaded automatically via `kagglehub`.
+
+- **32,581** loan applications
+- **12 raw features** → **41 model features** after engineering
+- **Target**: `loan_status` (0 = no default, 1 = default)
+
+---
+
+## Feature Engineering
+
+| Category | Features | Description |
+|---|---|---|
+| **Income Ratios** | DTI, PTI, monthly_payment_est, loan_to_income | Debt-to-income, payment-to-income, credit utilisation |
+| **Risk Buckets** | loan_grade_bucket, age_bucket, cred_hist_bucket | Prime/subprime, age groups, credit history bins |
+| **Employment** | emp_length_quantile, emp_length_missing | Quantile-based bucketing with missingness flag |
+| **WOE/IV** | Computed for all categoricals | loan_grade IV=0.88, home_ownership IV=0.38 |
+| **One-Hot** | 29 dummy variables | All categoricals encoded with drop_first=True |
+
+---
+
+## Model Performance
+
+**Production model:** Gradient Boosting (300 estimators, `max_depth=5`, balanced `sample_weight`), followed by isotonic calibration to correct probability inflation. Threshold tuned on the PR curve (strategy: max precision with recall ≥ 0.85).
+
+**Benchmark:** Random Forest (500 trees, `max_depth=16`, `class_weight=balanced_subsample`) — trained for comparison only, not deployed.
+
+Typical results on the test set (calibrated model, tuned threshold):
+
+| Metric | Value |
+|---|---|
+| AUC-ROC | ~0.949 |
+| Default Recall | ~0.855 |
+| Default Precision | ~0.689 |
+| Default F1 | ~0.763 |
+| Accuracy | ~0.884 |
+
+Full metrics and PR/ROC curves are displayed in the **Admin Monitoring** page and regenerated on each `python -m src.train` run.
+
+### Information Values (IV)
+
+| Feature | IV | Predictive Power |
+|---|---|---|
+| loan_grade | 0.8817 | Very Strong |
+| person_home_ownership | 0.3770 | Strong |
+| cb_person_default_on_file | 0.1640 | Medium |
+| loan_intent | 0.0958 | Weak |
+
+---
+
+## LangSmith — Tracing & Evaluation
+
+Set `LANGCHAIN_API_KEY` in `.env` to enable automatic tracing of every pipeline run to [LangSmith](https://smith.langchain.com) under project `credit-risk-agent-system`.
+
+### Evaluation suite
+
+```bash
+python -m eval.run_eval           # runs eval against credit-risk-eval-v2 dataset
+python -m eval.monitor --n 100    # prints monitoring report from recent LangSmith runs
+```
+
+**Per-example evaluators:** decision match, risk tier match, policy correctness, score range, judge ran, judge coherence.
+
+**Summary evaluators:** decision accuracy, precision/recall/F1, Brier score, policy recall.
+
+---
+
+## Security
+
+- **LLM guardrails** (`src/security/llm_guardrails.py`): system prompt block prepended to all LLM calls — fair-lending aware, forbids inferring protected attributes, echoing PII, or inventing identifiers.
+- **PII redaction** (`src/security/redact.py`): regex redaction for SSN-like, card-like, email, and US phone patterns — applied to all free-text chat input.
+- **RBAC** (`src/security/rbac.py`): user directory in `APP_RBAC_USERS` JSON; `filter_pipeline_result_for_role()` enforces field-level access per role.
+
+For production: replace plaintext passwords in `APP_RBAC_USERS` with bcrypt hashes or delegate to an identity provider.
+
+---
 
 ## Policy Documents
 
 | Document | Purpose |
-|----------|---------|
+|---|---|
 | [`docs/credit_policy.md`](docs/credit_policy.md) | Eligibility criteria, loan parameters, auto-approve/decline rules |
 | [`docs/risk_thresholds.md`](docs/risk_thresholds.md) | Risk tiers, confidence levels, model performance requirements |
 | [`docs/regulatory_constraints.md`](docs/regulatory_constraints.md) | Fair lending (ECOA), explainable AI, adverse action notices |
+
+---
 
 ## Project Structure
 
 ```
 Credit-Risk-Agent-System/
-├── main.py                          # Entry point – runs 3 sample applicants
-├── ui/
-│   └── app.py                       # Streamlit chat UI (RBAC + underwriting runs)
+├── setup.sh                          # One-command local setup
+├── main.py                           # CLI — runs 3 sample applicants
 ├── requirements.txt
-├── .env.example
+├── .env.example                      # Environment variable template
+├── ui/
+│   └── app.py                        # CreditGenie Streamlit app (2 pages)
+├── eval/
+│   ├── dataset.py                    # LangSmith golden + challenging eval examples
+│   ├── evaluators.py                 # Per-example and summary evaluators
+│   ├── run_eval.py                   # Run LangSmith evaluation suite
+│   └── monitor.py                    # Pull recent runs, compute PSI + distributions
 ├── data/
-│   ├── credit_risk_dataset.csv      # Raw Kaggle dataset
-│   └── credit_risk_clean.csv        # Cleaned dataset
+│   ├── credit_risk_dataset.csv       # Raw Kaggle dataset (auto-downloaded)
+│   ├── credit_risk_clean.csv         # Cleaned dataset
+│   ├── pr_curve_calibrated.png       # PR / ROC curves (generated by train)
+│   └── session_log.jsonl             # Persistent underwriting session log
 ├── models/
-│   ├── risk_model.joblib            # Trained Gradient Boosting (production)
-│   ├── scaler.joblib                # StandardScaler for continuous features
-│   ├── feature_names.joblib         # Ordered feature name list (41)
-│   ├── scaled_columns.joblib        # Columns the scaler was fit on (11)
-│   └── emp_quantile_edges.joblib    # Employment length quantile bin edges
+│   ├── risk_model.joblib             # Calibrated GB model (scoring)
+│   ├── risk_model_raw.joblib         # Raw GB model (SHAP TreeExplainer)
+│   ├── scaler.joblib                 # StandardScaler
+│   ├── feature_names.joblib          # Ordered feature list (41)
+│   ├── scaled_columns.joblib         # Columns the scaler was fit on
+│   ├── threshold.joblib              # Optimal decision threshold
+│   └── model_metrics.joblib          # Saved evaluation metrics (for monitoring UI)
 ├── docs/
 │   ├── credit_policy.md
 │   ├── risk_thresholds.md
 │   └── regulatory_constraints.md
 └── src/
     ├── security/
-    │   ├── llm_guardrails.py        # Bias + PII instructions prepended to LLM system prompts
-    │   ├── redact.py                # PII redaction for free text
-    │   └── rbac.py                  # Roles, login helper, pipeline result filtering
-    ├── data_ingestion.py            # Download, validate, clean, missingness flags
-    ├── feature_engineering.py       # WOE/IV, income ratios, buckets, one-hot
-    ├── risk_model.py                # Model training, evaluation, SHAP
-    ├── train.py                     # Training pipeline script
+    │   ├── llm_guardrails.py         # Bias + PII system prompt block
+    │   ├── redact.py                 # PII redaction
+    │   └── rbac.py                   # Roles, auth, result filtering
+    ├── data_ingestion.py             # Download, validate, clean
+    ├── feature_engineering.py        # WOE/IV, ratios, buckets, one-hot
+    ├── risk_model.py                 # Training, calibration, SHAP, threshold tuning
+    ├── train.py                      # Full training pipeline script
     └── agents/
-        ├── state.py                 # Pydantic state definitions
-        ├── graph.py                 # LangGraph pipeline orchestration
-        ├── data_aggregation.py      # Agent 1: Data validation
-        ├── feature_engineering_agent.py  # Agent 2: 41-feature computation
-        ├── risk_modeling.py         # Agent 3: Model scoring + SHAP
-        ├── policy_validation.py     # Agent 4: Policy checks
-        ├── decision_explanation.py  # Agent 5: LLM explanation report
-        └── llm_judge.py             # Agent 6: LLM audit / judge
+        ├── state.py                  # LangGraph state schema
+        ├── graph.py                  # Pipeline orchestration + LangSmith tracing
+        ├── llm_provider.py           # Groq/Llama 3 factory
+        ├── data_aggregation.py       # Agent 1
+        ├── feature_engineering_agent.py  # Agent 2
+        ├── risk_modeling.py          # Agent 3
+        ├── policy_validation.py      # Agent 4
+        ├── decision_explanation.py   # Agent 5 — internal analyst memo
+        └── llm_judge.py              # Agent 6 — independent audit
 ```
 
-## Compliance
+---
 
-- **Bias Checks**: Proxy variable monitoring for protected attributes; LLM agents use explicit fair-lending and non-discrimination instructions in system prompts
-- **Explainable AI**: SHAP-based feature attributions for every decision (withheld at `viewer` role in the UI)
-- **Regulatory Adherence**: ECOA/Reg B compliant adverse action notices
-- **Audit Trail**: Full agent trace with timestamps for every decision (visible to `auditor` / `admin` in the UI)
+## Output
+
+For each applicant the pipeline produces:
+
+| Field | Description |
+|---|---|
+| **Decision** | `APPROVE` / `DECLINE` / `MANUAL_REVIEW` |
+| **Risk Score** | Default probability 0.0 – 1.0 (calibrated) |
+| **Risk Tier** | `LOW` / `MEDIUM` / `HIGH` |
+| **Confidence** | Model confidence in the prediction |
+| **Explanation Report** | Internal analyst memo with top SHAP factors |
+| **Policy Violations** | List of breached credit policy rules |
+| **LLM Judge Verdict** | `CONCUR` / `FLAG_FOR_REVIEW` / `CHALLENGE` / `SKIPPED` |
+| **Agent Trace** | Timestamped execution log of all 6 agents |

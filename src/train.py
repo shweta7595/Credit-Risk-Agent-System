@@ -40,22 +40,24 @@ def main() -> None:
         prepare_model_data(df)
     )
 
-    logger.info("=== Step 4: Train production Gradient Boosting ===")
-    model, metrics_default = train_model(X_train, y_train, X_test, y_test)
+    logger.info("=== Step 4: Train production Gradient Boosting + calibration ===")
+    model, calibrated, metrics_default = train_model(X_train, y_train, X_test, y_test)
 
     logger.info("=== Step 4b: Train Random Forest (benchmark only) ===")
     rf_metrics = train_benchmark_random_forest(X_train, y_train, X_test, y_test)
 
-    logger.info("=== Step 5: Precision-Recall Threshold (production GB only) ===")
-    threshold_analysis = find_optimal_threshold(model, X_test, y_test, min_recall=0.85)
+    logger.info("=== Step 5: Precision-Recall Threshold (calibrated model) ===")
+    threshold_analysis = find_optimal_threshold(calibrated, X_test, y_test, min_recall=0.85)
     optimal_threshold = threshold_analysis["optimal_threshold"]
-    metrics_optimal = evaluate_model(model, X_test, y_test, threshold=optimal_threshold)
+    metrics_optimal = evaluate_model(calibrated, X_test, y_test, threshold=optimal_threshold)
 
-    logger.info("=== Step 6: Generate PR / ROC Curves (production GB) ===")
-    curve_path = plot_precision_recall_curve(model, X_test, y_test, optimal_threshold)
+    logger.info("=== Step 6: Generate PR / ROC Curves (calibrated model) ===")
+    curve_path = plot_precision_recall_curve(calibrated, X_test, y_test, optimal_threshold)
 
     logger.info("=== Step 7: Save production artifacts ===")
-    save_model(model, scaler, feature_names, scaled_columns, threshold=optimal_threshold)
+    save_model(model, scaler, feature_names, scaled_columns,
+               threshold=optimal_threshold, calibrated_model=calibrated,
+               metrics=metrics_optimal)
 
     print("\n" + "=" * 70)
     print("  MODEL TRAINING COMPLETE")

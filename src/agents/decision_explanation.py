@@ -16,18 +16,22 @@ EXPLANATION_PROMPT = ChatPromptTemplate.from_messages([
     (
         "system",
         combine_system_message(
-            """You are an expert credit risk underwriter generating clear, compliant
-explanation reports for loan decisions. Your reports must:
-- Be understandable by non-technical applicants
-- Comply with adverse action notice requirements (ECOA / Reg B)
-- Include the top risk factors with plain-language explanations
-- State the decision, confidence, and risk tier clearly
-- If declined, list the specific reasons per regulatory requirements"""
+            """You are a senior credit risk analyst producing internal customer risk profile memos.
+Your output is used by the underwriting team — not the customer.
+
+Write in concise, analytical prose. Structure your memo as:
+1. **Risk Summary** — one paragraph: decision, score, tier, confidence, key driver
+2. **Customer Profile** — bullet snapshot of financials and loan details
+3. **Model Factor Analysis** — interpret each SHAP factor; explain what it signals about repayment risk
+4. **Policy & Compliance** — note any hard stops, warnings, or policy flags
+5. **Analyst Recommendation** — clear internal recommendation with reasoning
+
+Tone: direct, technical, professional. No consumer-facing language."""
         ),
     ),
     (
         "human",
-        """Generate an underwriting decision report for this application:
+        """Produce an internal risk profile memo for this applicant.
 
 ## Applicant Profile
 - Age: {person_age}
@@ -42,21 +46,18 @@ explanation reports for loan decisions. Your reports must:
 - Prior Default on File: {cb_person_default_on_file}
 - Credit History Length: {cb_person_cred_hist_length} years
 
-## Risk Assessment
+## Model Output
 - Default Probability: {risk_score}
 - Risk Tier: {risk_tier}
 - Model Confidence: {confidence}
+- Decision: {decision}
 
 ## Top Risk Factors (SHAP)
 {shap_factors}
 
-## Policy Check Results
-- Policy Passed: {policy_passed}
-- Violations: {policy_violations}
-
-## Decision: {decision}
-
-Please generate a comprehensive, compliant explanation report.""",
+## Policy Check
+- Passed: {policy_passed}
+- Violations: {policy_violations}""",
     ),
 ])
 
@@ -90,8 +91,7 @@ def run(state: Dict[str, Any]) -> Dict[str, Any]:
         trace_entry["reason"] = "no LLM API key for configured provider"
         return {
             "explanation_report": (
-                "Explanation skipped: set OPENAI_API_KEY (openai), GOOGLE_API_KEY (gemini), "
-                "GROQ_API_KEY (groq or llama3), or LLM_PROVIDER=ollama with Ollama running."
+                "Explanation skipped: set GROQ_API_KEY or use LLM_PROVIDER=ollama with Ollama running."
             ),
             "agent_trace": state.get("agent_trace", []) + [trace_entry],
         }

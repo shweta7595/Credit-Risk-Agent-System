@@ -25,7 +25,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 from src.agents.graph import run_pipeline
-from src.agents.llm_provider import llm_credentials_ok, resolve_llm_provider
+from src.agents.llm_provider import llm_credentials_ok
 
 
 SAMPLE_APPLICANTS = [
@@ -130,10 +130,7 @@ def main():
 
     if not llm_credentials_ok():
         print("WARNING: No LLM API key for the configured provider.")
-        print(
-            f"  LLM_PROVIDER={resolve_llm_provider()} — set the matching key in .env "
-            "(OPENAI / GOOGLE / GROQ) or use ollama with the server running."
-        )
+        print("  Set GROQ_API_KEY in .env to enable LLM features.")
 
     langsmith_key = os.getenv("LANGCHAIN_API_KEY")
     if langsmith_key:

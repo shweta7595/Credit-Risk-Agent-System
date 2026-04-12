@@ -45,48 +45,41 @@ JUDGE_PROMPT = ChatPromptTemplate.from_messages(
         (
             "system",
             combine_system_message(
-                """You are an independent senior credit risk auditor and LLM judge.
-Your job is to review outputs from an automated underwriting pipeline (model + rules + explanation).
+                """You are an independent senior credit risk auditor conducting a second-line review.
+You receive the output of an automated underwriting pipeline and assess its integrity.
 
-Evaluate:
-1. **Consistency**: Does the stated decision (APPROVE / DECLINE / MANUAL_REVIEW) align with the default probability, risk tier, and policy violations?
-2. **Policy**: Are hard stops and warnings reflected appropriately in the narrative?
-3. **Fairness / proxies**: Any sign the explanation inappropriately relies on protected-class proxies or vague language?
-4. **Regulatory tone**: Is the explanation suitable for adverse-action or manual-review context (ECOA / Reg B spirit)?
+Your review covers:
+1. **Decision coherence** — does the decision align with the default probability, risk tier, and policy flags?
+2. **Model signal quality** — do the top SHAP factors logically support the score?
+3. **Policy adherence** — are hard stops and policy violations correctly reflected?
+4. **Risk flags** — identify any concentrations, anomalies, or edge cases the model may have missed.
 
-You do NOT re-score the applicant. You only judge quality and coherence of the automated output.
+You do NOT re-score the applicant. You assess the quality and defensibility of the pipeline output.
 
-Return structured fields exactly as specified:
-- verdict: exactly one of CONCUR, FLAG_FOR_REVIEW, CHALLENGE
-- rationale: concise professional assessment
-- concerns: list of strings (empty if none)
-- compliance_notes: short string (empty if nothing to add)"""
+Return structured fields:
+- verdict: CONCUR | FLAG_FOR_REVIEW | CHALLENGE
+- rationale: 2–4 sentences of internal analyst commentary
+- concerns: specific issues flagged (empty list if none)
+- compliance_notes: any fair-lending or policy alignment notes (empty if none)"""
             ),
         ),
         (
             "human",
-            """## Pipeline outputs to review
+            """## Second-Line Review — Automated Underwriting Output
 
-### Automated decision
-- **Decision**: {decision}
-- **Default probability (risk score)**: {risk_score}
-- **Risk tier**: {risk_tier}
-- **Binary prediction (1=default)**: {prediction}
-- **Model confidence**: {confidence}
-- **Policy passed**: {policy_passed}
+**Decision**: {decision} | **Risk Tier**: {risk_tier} | **Default Probability**: {risk_score}
+**Confidence**: {confidence} | **Binary Prediction**: {prediction} | **Policy Passed**: {policy_passed}
 
-### Policy violations (if any)
+### Policy Violations
 {policy_violations}
 
-### Top model factors (SHAP)
+### Top SHAP Factors
 {shap_summary}
 
-### Generated explanation report (may be truncated)
----
+### Analyst Risk Memo (excerpt)
 {explanation_excerpt}
----
 
-Provide your structured judgment.""",
+Provide your internal audit judgment.""",
         ),
     ]
 )
@@ -120,8 +113,7 @@ def run(state: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "llm_judge_verdict": "SKIPPED",
             "llm_judge_rationale": (
-                "Judge requires OPENAI_API_KEY, GOOGLE_API_KEY (gemini), GROQ_API_KEY (groq/llama3), "
-                "or LLM_PROVIDER=ollama with Ollama running."
+                "Judge requires GROQ_API_KEY or LLM_PROVIDER=ollama with Ollama running."
             ),
             "llm_judge_concerns": [],
             "llm_judge_compliance_notes": "",

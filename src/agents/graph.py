@@ -7,6 +7,8 @@ import logging
 import operator
 from typing import Any, Dict, List, Annotated, TypedDict, Optional
 
+from langsmith import traceable, Client as LangSmithClient
+from langsmith.run_helpers import get_current_run_tree
 from langgraph.graph import StateGraph, END
 
 from src.agents import (
@@ -99,6 +101,11 @@ def build_graph() -> StateGraph:
     return workflow.compile()
 
 
+@traceable(
+    name="credit-risk-pipeline",
+    tags=["underwriting", "production"],
+    metadata={"pipeline_version": "1.0"},
+)
 def run_pipeline(applicant_data: Dict[str, Any]) -> Dict[str, Any]:
     """Execute the full credit risk pipeline for one applicant."""
     graph = build_graph()
@@ -125,4 +132,33 @@ def run_pipeline(applicant_data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     result = graph.invoke(initial_state)
+    _log_ml_metrics(result)
     return result
+
+
+def _log_ml_metrics(result: Dict[str, Any]) -> None:
+    """Log key ML model metrics to LangSmith as feedback on the current run."""
+    try:
+        run_tree = get_current_run_tree()
+        if run_tree is None:
+            return
+        client = LangSmithClient()
+        metrics = {
+            "risk_score":        result.get("risk_score"),
+            "model_confidence":  result.get("confidence"),
+            "prediction":        result.get("prediction"),
+            "policy_violation_count": len(result.get("policy_violations") or []),
+        }
+        for key, value in metrics.items():
+            if value is not None:
+                client.create_feedback(run_tree.id, key=key, score=float(value))
+        # log decision and risk_tier as string labels
+        for key, value in [
+            ("decision",  result.get("decision")),
+            ("risk_tier", result.get("risk_tier")),
+            ("judge_verdict", result.get("llm_judge_verdict")),
+        ]:
+            if value:
+                client.create_feedback(run_tree.id, key=key, value=value)
+    except Exception:
+        pass  # monitoring must never break the pipeline

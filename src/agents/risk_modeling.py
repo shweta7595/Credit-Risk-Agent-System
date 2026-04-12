@@ -19,7 +19,7 @@ def run(state: Dict[str, Any]) -> Dict[str, Any]:
         "status": "running",
     }
 
-    model, scaler, feature_names, scaled_columns = load_model()
+    model, scaler, feature_names, scaled_columns, shap_model = load_model()
     threshold = load_threshold()
 
     feature_vector = state["feature_vector"]
@@ -45,7 +45,7 @@ def run(state: Dict[str, Any]) -> Dict[str, Any]:
 
     confidence = round(abs(proba - threshold) / max(threshold, 1 - threshold), 4)
 
-    explanation = explain_prediction(model, X_scaled, feature_names)
+    explanation = explain_prediction(shap_model, X_scaled, feature_names)
 
     trace_entry["status"] = "completed"
     trace_entry["risk_score"] = round(proba, 4)
